@@ -1,0 +1,60 @@
+#pragma TextEncoding = "UTF-8"
+#pragma rtGlobals=3		// Use modern global access method and strict wave access.
+#include <Multi-peak fitting 2.0>
+#include <WMBatchCurveFitIM>
+
+Function/S loadXRF()
+    Variable refNum
+    String message = "Select one or more files"
+    String outputPaths
+    String fileFilters = "Data Files (*.txt,*.dat,*.csv,*.emsa):.txt,.dat,.csv,.emsa;"
+    fileFilters += "All Files:.*;"
+
+    Open /D /R /MULT=1 /F=fileFilters /M=message refNum
+    outputPaths = S_fileName
+    
+    if (strlen(outputPaths) == 0)
+        Print "Cancelled"
+    else
+        Variable numFilesSelected = ItemsInList(outputPaths, "\r")
+        Variable i
+        for(i=0; i<numFilesSelected; i+=1)
+            String path = StringFromList(i, outputPaths, "\r")
+            Printf "%d: %s\r", i, path
+            // Add commands here to load the actual waves.  An example command
+            // is included below but you will need to modify it depending on how
+            // the data you are loading is organized.
+            //LoadWave/A/D/J/W/K=0/V={" "," $",0,0}/L={0,2,0,0,0} path
+            LoadWave/A/G/D/L={40,41,2048,1,0} path
+            //Worked this out with the Load Waves dialog box.
+            //The command used is printed to the command window.
+        endfor
+    endif
+    
+    return outputPaths      // Will be empty if user canceled
+End
+Function guassX3(w,x) : FitFunc
+	Wave w
+	Variable x
+
+	//CurveFitDialog/ These comments were created by the Curve Fitting dialog. Altering them will
+	//CurveFitDialog/ make the function less convenient to work with in the Curve Fitting dialog.
+	//CurveFitDialog/ Equation:
+	//CurveFitDialog/ f(x) = y0 + a1*exp(-((x-b1)/c1)^2) + a2*exp(-((x-b2)/c2)^2) + a3*exp(-((x-b3)/c3)^2) 
+	//CurveFitDialog/ End of Equation
+	//CurveFitDialog/ Independent Variables 1
+	//CurveFitDialog/ x
+	//CurveFitDialog/ Coefficients 10
+	//CurveFitDialog/ w[0] = y0
+	//CurveFitDialog/ w[1] = a1
+	//CurveFitDialog/ w[2] = b1
+	//CurveFitDialog/ w[3] = c1
+	//CurveFitDialog/ w[4] = a2
+	//CurveFitDialog/ w[5] = b2
+	//CurveFitDialog/ w[6] = c2
+	//CurveFitDialog/ w[7] = a3
+	//CurveFitDialog/ w[8] = b3
+	//CurveFitDialog/ w[9] = c3
+
+	return w[0] + w[1]*exp(-((x-w[2])/w[3])^2) + w[4]*exp(-((x-w[5])/w[6])^2) + w[7]*exp(-((x-w[8])/w[9])^2) 
+End

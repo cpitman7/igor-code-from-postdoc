@@ -1,0 +1,196 @@
+#pragma TextEncoding = "UTF-8"
+#pragma rtGlobals=3		// Use modern global access method and strict wave access.
+#include <Multi-peak fitting 2.0>
+#include <WMBatchCurveFitIM>
+#include <Global Fit 2>
+
+Function/S loadIRMatrix()
+    Variable refNum
+    String message = "Select one or more files"
+    String outputPaths
+    String fileFilters = "Data Files (*.txt,*.dat,*.csv,*.emsa):.txt,.dat,.csv,.emsa;"
+    fileFilters += "All Files:.*;"
+
+    Open /D /R /MULT=1 /F=fileFilters /M=message refNum
+    outputPaths = S_fileName
+    
+    Wave load0, load1, subset, irMatrix
+    
+    if (strlen(outputPaths) == 0)
+        Print "Cancelled"
+    else
+        Variable numFilesSelected = ItemsInList(outputPaths, "\r")
+        Variable i
+        for(i=0; i<numFilesSelected; i+=1)
+            String path = StringFromList(i, outputPaths, "\r")
+            Printf "%d: %s\r", i, path
+            // Add commands here to load the actual waves.  An example command
+            // is included below but you will need to modify it depending on how
+            // the data you are loading is organized.
+            //LoadWave/A/D/J/W/K=0/V={" "," $",0,0}/L={0,2,0,0,0} path
+            
+            //Loading waves with overwriting other waves
+            //load0 is x wave, load1 is y wave
+            LoadWave/J/D/N=load/O/K=0 path
+            //Worked this out with the Load Waves dialog box.
+            //The command used is printed to the command window.
+            
+            
+            //Finds the location in the xwave just before the methyl region (2700.38 cm-1)
+            //Makes a wave of the methyl region (2700.38 cm-1 to 3139.114 cm-1)
+            //Adds the subset onto the growing matrix
+            FindValue /V=2700.38 /T=0.1 load0
+            Duplicate/O/R=[v_Value,V_value+910] load1 subset
+            Concatenate {subset}, irMatrix
+            
+        endfor
+    endif
+    
+    //Sets the X scale. If the yscale is fixed insert here 
+    SetScale/I x 2700.38,3139.114,"", irMatrix
+    
+    return outputPaths      // Will be empty if user canceled
+End
+
+function matrixALS(w_matrix, lambda, asymmetry)
+    wave w_matrix
+    variable lambda, asymmetry
+    
+    Variable nCols = DimSize(w_matrix, 1)
+    Variable j
+    Wave w_data, baselines 
+    
+    variable i, N, rms, maxIts
+    
+    for (j = 0; j < nCols; j += 1)
+    
+    	Duplicate/O/R=[][j] w_matrix w_data
+		ALS(w_data, lambda, asymmetry)	
+		Wave w_base
+		Concatenate {w_base}, baselines
+		
+	endfor
+		 
+end
+
+// Note on ALS function
+// Originally developed by tony withers:
+//
+// by tony.withers@uwo.ca, using method of Eilers, PHC and Boelens, HFM
+// (2005) Baseline correction with asymmetric least squares smoothing.
+
+// Creates (and overwrites) w_base, a baseline estimate for w_data. The
+// asymmetry parameter (Eilers and Boelens' p) generally takes values
+// between 0.001 and 0.1. Try varying lambda in orders of magnitude
+// between 10^2 and 10^9. Not efficient for large N, try it for w_data
+// with fewer than 1000 points.
+//
+//
+// I just changed the code to avoid the slow matrix multiplication.
+// The H-matrix is now constructed "manually". This saves time and memory
+// allows larger datasets.
+// (kmichel@wzw.tum.de)
+
+function ALS(w_data, lambda, asymmetry)
+    wave w_data
+    variable lambda, asymmetry
+    variable i, N=numpnts(w_data), rms=inf
+    variable maxIts=20
+   
+    //    matrixOp /free  D = identity(N)
+    //    differentiate /EP=1/METH=2/DIM=0 D
+    //    differentiate /EP=1/METH=2/DIM=0 D
+
+    //      this step (specifically the matrix multiplication) is slow:
+    //      matrixOp /o H = lambda * (D^t x D)
+    
+    Make /O/N=(N) diag0 = 6
+    wave diag0
+    diag0[0]=1
+    diag0[1]=5
+    diag0[N-2]=5
+    diag0[N-1]=1
+
+    Make /O/N=(N-1) diag1 = -4
+    wave diag1
+    diag1[0]=-2
+    diag1[N-2]=-2
+
+    Make /O/N=(N-2) diag2 = 1
+    Make /O/N=(N,N) H
+    wave  H
+    matrixoP/o H = setoffdiag(H,0,diag0)
+    matrixop/o H = setoffdiag(H,-1,diag1)
+    matrixop/o H = setoffdiag(H,1,diag1)
+    matrixop/o H = setoffdiag(H,-2,diag2)
+    matrixop/o H = setoffdiag(H,2,diag2)
+    matrixop/o H = lambda * H
+    killwaves diag0, diag1, diag2
+    duplicate /o/free w_data w, w_new
+    w=1
+
+    for (i=0;i<maxIts;i+=1)
+        matrixOp /o /free  C = chol(diagRC(w, N, N)+H)
+        matrixOp /o w_base = backwardSub(C,(forwardSub(C^t, w * w_data)))
+        w_new = asymmetry * (w_data>w_base) + (1-asymmetry) * (w_data<w_base)
+       
+        // convergence test
+        w-=w_new
+        wavestats /Q w
+        if (v_rms>=rms)
+            killwaves H    
+            return i+1
+        else
+            rms=v_rms
+            w=w_new
+        endif
+    
+    endfor
+
+    return 0
+end
+
+
+
+Function FitManyGaussian(w, x) : FitFunc
+	WAVE w
+	Variable x
+
+	Variable returnValue = 0
+	Variable i
+	Variable numPeaks = floor((numpnts(w))/3)
+	Variable cfi
+	//Print ("check")
+	for (i = 0; i < numPeaks; i += 1)
+		cfi = 3*i
+		//Print(cfi)
+		returnValue += w[cfi]*exp(-((x-w[cfi+1])/w[cfi+2])^2)
+	endfor
+	return returnValue
+End
+
+Constant sqrtln2=0.832554611157698			// sqrt(ln(2))
+Constant sqrtln2pi=0.469718639349826		// sqrt(ln(2)/pi)
+
+Function FitManyVoigt(w, x) : FitFunc
+	WAVE w
+	Variable x
+
+	Variable returnValue = 0
+	Variable i
+	Variable numPeaks = floor((numpnts(w))/4)
+	Variable cfi
+	//Print ("check")
+	for (i = 0; i < numPeaks; i += 1)
+		cfi = 4*i
+		//Print(cfi)
+		//w[cfi+0] = area
+		//w[cfi+1] = x0
+		//w[cfi+2] = gw (FWHM)
+		//w[cfi+3] = shape (Lw/Gw)
+		Variable voigtX = 2*sqrtln2*(x-w[cfi+1])/w[cfi+2]
+		Variable voigtY = sqrtln2*w[cfi+3]
+		returnValue += (w[cfi]/w[cfi+2])*2*sqrtln2pi*VoigtFunc(voigtX, voigtY)
+	endfor
+	return returnValue
+End
