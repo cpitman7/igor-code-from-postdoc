@@ -1,0 +1,198 @@
+Sub DoTheImport()
+' This prompts the user for an array of FileName, assumes the ' separator is a tab, and then calls the appropriate sub to ' import the file. A sub is then called to make a chart.
+    Dim FileName() As Variant
+    Dim Sep As String
+    Dim Index As Integer
+    FileName() = Application.GetOpenFilename(FileFilter:="DTA File (*.dta),*.dta", MultiSelect:=True)
+    If Not IsArray(FileName) Then
+        ''''''''''''''''''''''''''
+        ' user cancelled, get out
+        ''''''''''''''''''''''''''
+        Exit Sub
+    End If
+    'Defining the file at tab deliminated
+    Sep = vbTab
+    'Sep = Application.InputBox("Enter a separator character.", Type:=2)
+    'If Sep = vbNullString Then
+        ''''''''''''''''''''''''''
+        ' user cancelled, get out
+        ''''''''''''''''''''''''''
+        'Exit Sub
+    'End If
+    'Debug.Print LBound(FileName) & UBound(FileName)
+    'ImportDTAFile FName:=CStr(FileName(1)), Sep:=CStr(Sep)
+    'Steps through the array of files to import
+    For Index = 1 To UBound(FileName)
+        ImportDTAFile FName:=CStr(FileName(Index)), Sep:=CStr(Sep)
+    Next
+    'This is just making plotting work better. It's a bootstrap solution.
+    'Rows(2).Delete
+    'Rows(2).Delete
+    'CreateChart traces:=(UBound(FileName))
+    End Sub
+    ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+
+Public Sub ImportDTAFile(FName As String, Sep As String)
+' This imports the first file (including wavelength) into Excel.
+Dim RowNdx As Long
+Dim ColNdx As Integer
+Dim TempVal As Variant
+Dim WholeLine As String
+Dim Pos As Integer
+Dim NextPos As Integer
+Dim SaveColNdx As Integer
+Dim SheetName As String
+
+Application.ScreenUpdating = False
+'On Error GoTo EndMacro:
+
+'Make a new sheet to import into
+ActiveWorkbook.Sheets.Add After:=Worksheets(Worksheets.Count)
+
+SheetName = Right(FName, Len(FName) - InStrRev(FName, "\"))
+Worksheet_Change (SheetName)
+
+SaveColNdx = ActiveCell.Column
+RowNdx = 1
+
+Open FName For Input Access Read As #1
+
+While Not EOF(1) 'steps through the lines of the file
+    Line Input #1, WholeLine
+    If Right(WholeLine, 1) <> Sep Then
+        WholeLine = WholeLine & Sep
+    End If
+    
+    ColNdx = SaveColNdx
+    Pos = 1
+    NextPos = InStr(Pos, WholeLine, Sep)
+    While NextPos >= 1
+        TempVal = Mid(WholeLine, Pos, NextPos - Pos)
+        Cells(RowNdx, ColNdx).Value = TempVal
+        Pos = NextPos + 1
+        ColNdx = ColNdx + 1
+        NextPos = InStr(Pos, WholeLine, Sep)
+    Wend
+    
+    RowNdx = RowNdx + 1
+Wend
+
+If Cells(2, 2).Value = "CV" Then
+    ExtractCV (SheetName)
+End If
+
+EndMacro:
+On Error GoTo 0
+Application.ScreenUpdating = True
+Close #1
+End Sub
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+
+Public Sub ExtractCV(ParentName As String)
+    
+    Dim SourceSheet, ChildSheet As Worksheet
+    Set SourceSheet = ActiveSheet
+    
+    
+    ActiveWorkbook.Sheets.Add After:=SourceSheet
+    Worksheet_Change ("Sub" + ParentName)
+    Set ChildSheet = ActiveSheet
+    SourceSheet.Activate
+    
+    Dim lastRow As Long
+    
+    'With SourceSheet
+    '    lastRow = .Cells(.Rows.Count, "D").End(xlUp).Row
+    'End With
+    lastRow = Cells(Rows.Count, "D").End(xlUp).Row
+    
+    'Debug.Print lastRow
+    
+    Dim curveCounter As Integer
+    'Dim c, d As Range
+    
+    With Range(Cells(1, 1), Cells(lastRow, 1))
+         Set c = .Find("CURVE", LookIn:=xlValues)
+         If Not c Is Nothing Then
+            firstAddress = c.Address
+            curveCounter = 1
+            Do
+                Set d = c
+                Set c = .FindNext(c)
+                If c.Address <> firstAddress Then
+                    Range(Cells(d.Row, 4), Cells(c.Row - 1, 5)).Copy Destination:=ChildSheet.Cells(1, curveCounter * 2 - 1)
+                    ChildSheet.Cells(1, curveCounter * 2 - 1).Value = d
+                    curveCounter = curveCounter + 1
+                End If
+            If c Is Nothing Then
+                GoTo DoneFinding
+            End If
+            Loop While c.Address <> firstAddress
+        End If
+DoneFinding:
+    End With
+
+End Sub
+
+Private Sub Worksheet_Change(SheetName As String)
+    
+    'If the length of the target cell's entry is greater than 31 characters, disallow the entry.
+    If Len(SheetName) > 31 Then
+       SheetName = Left(SheetName, 31)
+    End If
+
+    'Sheet tab names cannot contain the characters /, \, [, ], *, ?, or :.
+    'Verify that none of these characters are present in the cell's entry.
+    Dim IllegalCharacter(1 To 7) As String, i As Integer
+    IllegalCharacter(1) = "/"
+    IllegalCharacter(2) = "\"
+    IllegalCharacter(3) = "["
+    IllegalCharacter(4) = "]"
+    IllegalCharacter(5) = "*"
+    IllegalCharacter(6) = "?"
+    IllegalCharacter(7) = ":"
+    For i = 1 To 7
+        If InStr(SheetName, (IllegalCharacter(i))) > 0 Then
+            'MsgBox "You used a character that violates sheet naming rules." &; vbCrLf &; vbCrLf &; _
+            '"Please re-enter a sheet name without the ''" &; IllegalCharacter(i) &; "'' character.", 48, "Not a possible sheet name !!"
+            Debug.Print "Illegal Character"
+            Application.EnableEvents = False
+            
+            Application.EnableEvents = True
+            
+            Exit Sub
+        End If
+    Next i
+
+    ActiveSheet.Name = SheetName
+    
+
+    'Verify that the proposed sheet name does not already exist in the workbook.
+    'Dim wks As Worksheet, bln As Boolean
+    'On Error Resume Next
+    'Set wks = ActiveWorkbook.Worksheets(sheetName)
+    'On Error Resume Next
+    'If Not wks Is Nothing Then
+    '    bln = True
+    'Else
+    '    bln = False
+    '    Err.Clear
+    'End If
+
+    'If the worksheet name does not already exist, name the active sheet as the target cell value.
+    'Otherwise, advise the user that duplicate sheet names are not allowed.
+    'If bln = False Then
+    '    ActiveSheet.Name = sheetName
+    'Else
+        'MsgBox "There is already a sheet named " &; strSheetName &; "." &; vbCrLf &; _
+        '"Please enter a unique name for this sheet."
+    '    Application.EnableEvents = False
+    '    Target.ClearContents
+     '   Application.EnableEvents = True
+      '  Debug.Assert "Duplicate"
+    'End If
+
+End Sub
+
+
+
